@@ -3,6 +3,7 @@ package com.example.mlkit
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -29,6 +30,11 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import coil.compose.rememberAsyncImagePainter
 import com.example.mlkit.ui.theme.MLkitTheme
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.objects.DetectedObject
+import com.google.mlkit.vision.objects.ObjectDetection
+import com.google.mlkit.vision.objects.ObjectDetector
+import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -38,12 +44,21 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var imageUri: Uri
     private var selectedImageUri by mutableStateOf<Uri?>(null)
+    private var detectionObjects by mutableStateOf(emptyList<DetectedObject>())
+
 
     private val cameraLauncher =
         registerForActivityResult(ActivityResultContracts.TakePicture(), ::handleImageCapture)
 
     private val galleryLauncher =
         registerForActivityResult(ActivityResultContracts.GetContent()) { selectedImageUri = it }
+
+    private val objectDetector by lazy {
+        val options =
+            ObjectDetectorOptions.Builder().setDetectorMode(ObjectDetectorOptions.SINGLE_IMAGE_MODE)
+                .enableMultipleObjects().enableClassification().build()
+        ObjectDetection.getClient(options)
+    }
 
 
     @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
@@ -55,10 +70,23 @@ class MainActivity : ComponentActivity() {
                     ImageSelectorScreen(
                         onCameraClick = { requestCameraPermission() },
                         onGalleryClick = { launchGallery() },
-                        selectedImageUri
+                        onDetectObjectsClick = { detectObjects() },
+                        selectedImageUri,
+                        detectionObjects
                     )
                 }
             }
+        }
+    }
+
+    private fun detectObjects() {
+        selectedImageUri?.let {
+            InputImage.fromFilePath(this, it).let(objectDetector::process)
+                .addOnSuccessListener { objects ->
+                    detectionObjects = objects
+                }.addOnFailureListener {
+                    detectionObjects = emptyList()
+                }
         }
     }
 
@@ -117,15 +145,28 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun ImageSelectorScreen(
-    onCameraClick: () -> Unit, onGalleryClick: () -> Unit, selectedImageUri: Uri?
+    onCameraClick: () -> Unit,
+    onGalleryClick: () -> Unit,
+    onDetectObjectsClick: () -> Unit,
+    selectedImageUri: Uri?,
+    detectedObjects: List<DetectedObject>
 ) {
     var localImageUri by remember {
         mutableStateOf(selectedImageUri)
     }
 
+    var localDetectedObjects by remember {
+        mutableStateOf(detectedObjects)
+    }
+
     // Used this approach to learn LaunchedEffect otherwise passing lambda maybe better in this scenario
     LaunchedEffect(selectedImageUri) {
         localImageUri = selectedImageUri
+        localDetectedObjects = emptyList()
+    }
+
+    LaunchedEffect(detectedObjects) {
+        localDetectedObjects = detectedObjects
     }
 
     Column(
@@ -148,6 +189,17 @@ fun ImageSelectorScreen(
                     .padding(16.dp),
                 contentScale = ContentScale.Fit
             )
+            if (localDetectedObjects.isEmpty()) {
+                Button(onClick = onDetectObjectsClick) {
+                    Text(text = "Start Object Detection")
+                }
+            } else {
+                localDetectedObjects.forEach {
+                    if (it.labels.isNotEmpty()) {
+                        Text(text = it.labels.first().text + ":" + it.labels.first().confidence)
+                    }
+                }
+            }
         }
     }
 }
